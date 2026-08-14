@@ -27,9 +27,9 @@ server {
     }
 
     # Redirect the UI to HTTPS
-    #if ($server_port = 80) {
-    #    return 301 https://$host$request_uri;
-    #}
+    if ($server_port = 80) {
+        return 301 https://$host$request_uri;
+    }
 
     #******************************************************
     #       OpenTakServer WebUI
