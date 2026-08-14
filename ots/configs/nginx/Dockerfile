@@ -18,7 +18,6 @@ FROM nginx:mainline-bookworm
 COPY --chmod=0755 ./ots/configs/nginx/docker-entrypoint.d/10-default-ots.envsh /docker-entrypoint.d
 COPY --from=build /build /usr/share/nginx/html/
 COPY ./ots/configs/nginx/includes/ /etc/nginx/includes.d
-COPY ./ots/configs/nginx/templates/* /etc/nginx/conf.d
 
 HEALTHCHECK --interval=30s --start-period=30s CMD curl -k -I -A 'Docker-healthcheck' --fail http://localhost/health || exit 1
 
