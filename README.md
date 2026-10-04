@@ -1,3 +1,5 @@
+本來是想做tak.gov的版本的，後面還是opentakserver好處理
+
 # Synology OpenTAKServer + Registration Portal
 
 一個適合 Synology DSM Container Manager 的整合部署包：OpenTAKServer、Web UI、PostGIS、RabbitMQ、MediaMTX，以及帶有帳號申請、進度查詢、憑證下載、群組管理與管理員審核功能的繁體中文入口網站。
@@ -6,10 +8,11 @@
 > 這是社群整合專案，不是 OpenTAKServer 官方發行版。OpenTAKServer 上游專案採 GPL-3.0；本儲存庫保留授權與原始碼，詳細來源見 [UPSTREAM.md](UPSTREAM.md)。
 
 > [!NOTE]
-> 本專案由 TAYA TAK 使用者與 OpenAI ChatGPT／Codex 協作產製、整理及除錯。AI 產製內容不代表 OpenAI 或 OpenTAKServer 官方背書；部署前仍應由管理者檢查程式碼、備份與安全設定。
+> 本專案由 OpenAI ChatGPT／Codex 協作產製、整理及除錯。AI 產製內容不代表 OpenAI 或 OpenTAKServer 官方背書；部署前仍應由管理者檢查程式碼、備份與安全設定。
 
 ## 頁面預覽
-
+https://tayaweb.net/
+（管理員不一定會馬上審核，服務不一定會持續開著）
 ### 使用者註冊頁
 
 ![帳號申請頁](docs/registration-page.svg)
