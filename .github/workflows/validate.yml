@@ -17,6 +17,8 @@ jobs:
       - name: Shell syntax
         run: find . -name '*.sh' -not -path './.git/*' -exec sh -n {} \;
       - name: Compose configuration
-        run: docker compose --env-file .env.example config --quiet
+        run: |
+          cp .env.example .env
+          docker compose --env-file .env.example config --quiet
       - name: Source hygiene and local README links
         run: python scripts/validate_source.py
