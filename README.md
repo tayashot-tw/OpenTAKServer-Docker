@@ -148,3 +148,8 @@ docker compose up -d --build
 ## 支持
 
 如果這個 DSM 整合包對你有幫助，可以透過 [PayPal.Me/tayashot](https://paypal.me/tayashot) 支持維護。
+
+## Maintenance status / 維護狀態
+
+This early-stage community integration restores the source of the published v1.1.0 package to the default branch. It is maintained by `tayashot-tw`; adoption metrics are not claimed. See [CHANGELOG.md](CHANGELOG.md) for provenance and known limitations. CI checks syntax, Compose configuration, source hygiene and local README links; it does not prove a working DSM deployment. Administrator 2FA interoperability remains unverified.
+
