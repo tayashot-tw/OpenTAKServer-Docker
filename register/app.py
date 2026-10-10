@@ -25,6 +25,7 @@ from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 from werkzeug.middleware.proxy_fix import ProxyFix
 from werkzeug.security import check_password_hash, generate_password_hash
+from admin_auth import AdminAuth
 
 DATA_DIR = Path(os.getenv("DATA_DIR", "/data"))
 DB_PATH = DATA_DIR / "requests.sqlite3"
@@ -114,14 +115,16 @@ def csrf_token():
 
 
 def require_csrf():
-    if not secrets.compare_digest(request.form.get("csrf_token", ""), session.get("csrf_token", "")):
+    if not session.get("csrf_token") or not secrets.compare_digest(request.form.get("csrf_token", ""), session["csrf_token"]):
         abort(400, "表單已逾時，請重新整理後再試。")
 
 
 def admin_required(fn):
     @wraps(fn)
     def wrapped(*args, **kwargs):
-        if not session.get("admin_token") or session.get("admin_expires", 0) < time.time():
+        try:
+            admin_auth.token(session.get("admin_session", ""))
+        except Exception:
             session.clear()
             return redirect(url_for("admin_login"))
         return fn(*args, **kwargs)
@@ -145,18 +148,8 @@ def ots_request(method, path, token=None, **kwargs):
     return response
 
 
-def ots_login(username, password):
-    response = ots_request(
-        "POST", "/api/login", params={"include_auth_token": ""},
-        json={"username": username, "password": password}
-    )
-    payload = response.json()
-    token = payload["response"]["user"]["authentication_token"]
-    me = ots_request("GET", "/api/me", token=token).json()
-    roles = str(me).lower()
-    if "admin" not in roles:
-        raise RuntimeError("此帳號不是 OpenTAK 管理員")
-    return token
+def admin_token():
+    return admin_auth.token(session.get("admin_session", ""))
 
 
 def verify_application_login(row, password):
@@ -198,6 +191,9 @@ def send_decision_email(row, approved, download_token=None, note=""):
     recipient = (row["email"] or "").strip()
     if not recipient:
         return "no-email"
+    smtp_host = os.getenv("SMTP_HOST", "").strip()
+    if not smtp_host:
+        return "disabled"
     base_url = os.getenv("PUBLIC_BASE_URL", "http://localhost:8787").rstrip("/")
     message = EmailMessage()
     message["From"] = os.getenv("SMTP_FROM", "noreply@example.com")
@@ -224,9 +220,25 @@ def send_decision_email(row, approved, download_token=None, note=""):
         if not zipfile.is_zipfile(io.BytesIO(content)):
             raise RuntimeError("設定包格式無效，無法寄送附件")
         message.add_attachment(content, maintype="application", subtype="zip", filename=f"{row['callsign']}-ATAK-setup.zip")
-    with smtplib.SMTP(os.environ["SMTP_HOST"], int(os.getenv("SMTP_PORT", "25")), timeout=15) as smtp:
+    use_ssl = os.getenv("SMTP_SSL", "false").lower() in {"1", "true", "yes"}
+    starttls = os.getenv("SMTP_STARTTLS", "false").lower() in {"1", "true", "yes"}
+    if use_ssl and starttls:
+        raise RuntimeError("SMTP_SSL 與 SMTP_STARTTLS 不可同時啟用")
+    try:
+        port = int(os.getenv("SMTP_PORT") or ("465" if use_ssl else "25"))
+        if not 1 <= port <= 65535:
+            raise ValueError
+    except ValueError:
+        raise RuntimeError("SMTP_PORT 必須為 1–65535") from None
+    username = os.getenv("SMTP_USERNAME", "")
+    password = os.getenv("SMTP_PASSWORD", "")
+    if bool(username) != bool(password):
+        raise RuntimeError("SMTP_USERNAME 與 SMTP_PASSWORD 必須一起設定")
+    smtp_class = smtplib.SMTP_SSL if use_ssl else smtplib.SMTP
+    options = {"context": ssl.create_default_context()} if use_ssl else {}
+    with smtp_class(smtp_host, port, timeout=15, **options) as smtp:
         smtp.ehlo()
-        if os.getenv("SMTP_STARTTLS", "false").lower() in {"1", "true", "yes"}:
+        if starttls:
             smtp.starttls(context=ssl.create_default_context())
             smtp.ehlo()
         if os.getenv("SMTP_USERNAME") and os.getenv("SMTP_PASSWORD"):
@@ -397,6 +409,7 @@ def status(token):
 def download(token):
     cleanup_expired_packages()
     with db() as conn:
+
         row = conn.execute(
             "SELECT * FROM applications WHERE download_token=? AND status='approved'", (token,)
         ).fetchone()
@@ -420,20 +433,44 @@ def admin_login():
     if request.method == "POST":
         require_csrf()
         try:
-            token = ots_login(request.form.get("username", ""), request.form.get("password", ""))
+            admin_auth.delete(session.get("admin_challenge", ""))
+            challenge, method = admin_auth.begin(request.form.get("username", ""), request.form.get("password", ""))
             session.clear()
-            session["admin_token"] = token
-            session["admin_expires"] = int(time.time()) + ADMIN_SESSION_TTL
-            session.permanent = True
-            return redirect(url_for("admin_queue"))
+            session["admin_challenge"] = challenge
+            session["admin_method"] = method
+            return redirect(url_for("admin_two_factor"))
         except Exception as exc:
             flash(f"登入失敗：{exc}", "error")
     return render_template("admin_login.html")
 
 
+@app.route("/admin/2fa", methods=["GET", "POST"])
+@limiter.limit("20 per hour")
+def admin_two_factor():
+    challenge = session.get("admin_challenge", "")
+    try:
+        admin_auth.read(challenge, "challenge")
+    except Exception:
+        session.clear()
+        return redirect(url_for("admin_login"))
+    if request.method == "POST":
+        require_csrf()
+        try:
+            key = admin_auth.finish(challenge, request.form.get("code", "").strip(), ADMIN_SESSION_TTL)
+            session.clear()
+            session["admin_session"] = key
+            session.permanent = True
+            return redirect(url_for("admin_queue"))
+        except Exception:
+            flash("驗證碼未通過，請確認驗證碼後重試。", "error")
+    return render_template("admin_2fa.html", method=session.get("admin_method"))
+
+
 @app.post("/admin/logout")
 def admin_logout():
     require_csrf()
+    admin_auth.delete(session.get("admin_session", ""))
+    admin_auth.delete(session.get("admin_challenge", ""))
     session.clear()
     return redirect(url_for("index"))
 
@@ -462,7 +499,7 @@ def approve(application_id):
         flash("無法解密申請密碼，請申請人重新送出。", "error")
         return redirect(url_for("admin_queue"))
     try:
-        token = session["admin_token"]
+        token = admin_token()
         group_name = valid_group_name(request.form.get("assigned_group", row["requested_group"]))
         # Resolve a prior partial approval before attempting creation.
         # Authentication is the ownership check, never an error-message guess.
@@ -497,7 +534,11 @@ def approve(application_id):
             )
         try:
             mail_state = send_decision_email(row, True, download_token=download_token)
-            suffix = "，已寄送設定包附件。" if mail_state == "sent" else "；此舊申請未留電子郵件。"
+            suffix = {
+                "sent": "，已寄送設定包附件。",
+                "disabled": "；未設定 SMTP，請通知申請人登入下載。",
+                "no-email": "；此舊申請未留電子郵件。",
+            }[mail_state]
             flash(f"已核准 {row['username']}，設定包可於登入後隨時下載{suffix}", "success")
         except Exception as mail_error:
             app.logger.exception("approval email failed")
@@ -632,8 +673,16 @@ def prepare_atak_package(content, username, callsign):
                             authority = f"{host}:{update_url.port}" if update_url.port else host
                             entry.text = urlunsplit((update_url.scheme, authority, update_url.path, update_url.query, update_url.fragment))
                     found["preferences"] = True
-                    password_entry = prefs.find("entry[@key='clientPassword']")
-                    client_path = prefs.find("entry[@key='certificateLocation']")
+                    # Current ATAK packages store per-connection credentials in
+                    # cot_streams; older packages use the application preferences.
+                    password_entry = streams.find("entry[@key='clientPassword0']")
+                    client_path = streams.find("entry[@key='certificateLocation0']")
+                    if password_entry is None and client_path is None:
+                        password_entry = streams.find("entry[@key='clientPassword']")
+                        client_path = streams.find("entry[@key='certificateLocation']")
+                    if password_entry is None and client_path is None:
+                        password_entry = prefs.find("entry[@key='clientPassword']")
+                        client_path = prefs.find("entry[@key='certificateLocation']")
                     if password_entry is None or client_path is None or not client_path.text or Path(client_path.text).name != f"{username}.p12":
                         raise RuntimeError("設定包憑證與申請帳號不符")
                     candidates = [i for i in source.infolist() if Path(i.filename).name == f"{username}.p12"]
@@ -663,7 +712,7 @@ def manage_group():
         listed = request.form.get("listed") == "1"
         if name == "publicuser" and not listed:
             raise ValueError("publicuser 為預設公開群組，不可隱藏")
-        ensure_group(session["admin_token"], name, description)
+        ensure_group(admin_token(), name, description)
         with db() as conn:
             conn.execute("INSERT INTO registration_groups(name,listed,description) VALUES(?,?,?) ON CONFLICT(name) DO UPDATE SET listed=excluded.listed,description=excluded.description", (name, int(listed), description))
         flash(f"已儲存群組 {name}；" + ("註冊時可下拉選擇。" if listed else "只接受手填名稱申請或管理員指派。"), "success")
@@ -682,8 +731,8 @@ def assign_group(application_id):
         abort(409)
     try:
         name = valid_group_name(request.form.get("assigned_group", ""))
-        ensure_group(session["admin_token"], name)
-        join_group(session["admin_token"], row["username"], name)
+        ensure_group(admin_token(), name)
+        join_group(admin_token(), row["username"], name)
         with db() as conn:
             conn.execute("INSERT OR IGNORE INTO registration_groups(name,listed) VALUES(?,0)", (name,))
             conn.execute("UPDATE applications SET assigned_group=? WHERE id=?", (name, application_id))
@@ -694,3 +743,5 @@ def assign_group(application_id):
 
 
 init_db()
+admin_auth = AdminAuth(db, fernet, OTS_BASE_URL, VERIFY_TLS)
+admin_auth.init_db()
