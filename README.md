@@ -83,12 +83,21 @@ docker compose logs -f opentakserver register
 - 公開群組下拉選單與自訂群組申請
 - 使用申請帳密查詢審核狀態
 - 核准後產生並下載 ATAK 設定包
-- 管理員以 OpenTAKServer 管理員帳密登入審核
+- 管理員以 OpenTAKServer 管理員帳密及原生兩步驟驗證登入審核
+- 需先在 OpenTAKServer 啟用兩步驟驗證並設定每次登入驗證
 - 建立群組、加入 IN/OUT 群組方向及後續指派群組
 - 可選 SMTP 通知與設定包附件寄送
 - CSRF、速率限制、短效管理工作階段及安全 Cookie
 
 SMTP 為選配。未設定 `SMTP_HOST` 時，核准與設定包下載仍可正常使用，只會在管理頁顯示郵件未寄出的提示。
+
+SMTP 寄信需在 `.env` 設定郵件伺服器提供的 `SMTP_HOST`、`SMTP_PORT`、`SMTP_FROM`，以及需要時的 `SMTP_USERNAME`、`SMTP_PASSWORD`。
+
+- 587／STARTTLS：`SMTP_STARTTLS=true`、`SMTP_SSL=false`。
+- 465／SSL：`SMTP_SSL=true`、`SMTP_STARTTLS=false`。
+- 兩種加密模式不可同時啟用；帳號和密碼必須一起設定。
+
+修改 `.env` 後需重新建立註冊容器才會載入新環境：`docker compose up -d --no-deps --force-recreate register`。修改程式則加上 `--build`。未設定 SMTP 時，管理頁會明確提示通知申請人登入下載，不會顯示缺少 `SMTP_HOST` 的例外。
 
 ## 自訂品牌
 
@@ -151,5 +160,6 @@ docker compose up -d --build
 
 ## Maintenance status / 維護狀態
 
-This early-stage community integration restores the source of the published v1.1.0 package to the default branch. It is maintained by `tayashot-tw`; adoption metrics are not claimed. See [CHANGELOG.md](CHANGELOG.md) for provenance and known limitations. CI checks syntax, Compose configuration, source hygiene and local README links; it does not prove a working DSM deployment. Administrator 2FA interoperability remains unverified.
+This early-stage community integration restores the source of the published v1.1.0 package to the default branch. It is maintained by `tayashot-tw`; adoption metrics are not claimed. See [CHANGELOG.md](CHANGELOG.md) for provenance and known limitations. CI checks syntax, Compose configuration, source hygiene and local README links; it does not prove a working DSM deployment. Native administrator 2FA regression tests are included; a real login and email delivery still require verification in each deployment.
+
 
